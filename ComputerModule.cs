@@ -16,19 +16,23 @@ namespace KRPC.MechJeb {
 		private static MethodInfo onFixedUpdate;
 
 		// Fields and methods
-		private static PropertyInfo enabled;
-		private static FieldInfo usersField;
+		// Made `internal` (was `private`) so subclasses that need to
+		// read/write enabled/users on a *different* MuMech instance (e.g.
+		// AscentAutopilot dispatching to the active concrete autopilot)
+		// can share the same reflection cache.
+		internal static PropertyInfo enabled;
+		internal static FieldInfo usersField;
 
 		// Instance objects
 		protected internal object instance;
 
-		private object users;
+		protected internal object users;
 
 		internal static void InitType(Type type) {
 			onFixedUpdate = type.GetCheckedMethod("OnFixedUpdate");
 
-			enabled = type.GetCheckedProperty("enabled");
-			usersField = type.GetCheckedField("users");
+			enabled = type.GetCheckedProperty("Enabled");
+			usersField = type.GetCheckedField("Users");
 		}
 
 		protected internal override void InitInstance(object instance) {
@@ -51,7 +55,7 @@ namespace KRPC.MechJeb {
 			onFixedUpdate.Invoke(this.instance, null);
 		}
 
-		private static class UserPool {
+		internal static class UserPool {
 			internal const string MechJebType = "MuMech.UserPool";
 
 			internal static MethodInfo usersAdd;
@@ -82,7 +86,7 @@ namespace KRPC.MechJeb {
 		public string Status => (string)status.GetValue(this.instance, null);
 
 		internal static new void InitType(Type type) {
-			status = type.GetCheckedProperty("status");
+			status = type.GetCheckedProperty("Status");
 		}
 	}
 

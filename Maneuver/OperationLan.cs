@@ -5,36 +5,28 @@ using KRPC.MechJeb.ExtensionMethods;
 using KRPC.Service.Attributes;
 
 namespace KRPC.MechJeb.Maneuver {
-	/**
-	 * <summary>Change longitude of ascending node</summary>
-	 */
+	/// <summary>
+	/// Plan a maneuver to change the longitude of ascending node (LAN).
+	///
+	/// In MechJeb 2.15 the target LAN is read from
+	/// <see cref="TargetController"/> (<c>targetLongitude</c>) at MakeNodes
+	/// time — there's no longer a per-operation field. Set the target's
+	/// longitude through the TargetController before calling
+	/// <see cref="Operation.MakeNodes"/>.
+	/// </summary>
 	[KRPCClass(Service = "MechJeb")]
 	public class OperationLan : TimedOperation {
 		internal new const string MechJebType = "MuMech.OperationLan";
 
-		// Fields and methods
-		private static FieldInfo newLANField;
 		private static FieldInfo timeSelector;
 
-		// Instance objects
-		private object newLAN;
-
 		internal static new void InitType(Type type) {
-			newLANField = type.GetCheckedField("newLAN");
 			timeSelector = GetTimeSelectorField(type);
 		}
 
 		protected internal override void InitInstance(object instance) {
 			base.InitInstance(instance);
-
-			this.newLAN = newLANField.GetInstanceValue(instance);
 			this.InitTimeSelector(timeSelector);
-		}
-
-		[KRPCProperty]
-		public double NewLAN {
-			get => EditableDouble.Get(this.newLAN);
-			set => EditableDouble.Set(this.newLAN, value);
 		}
 	}
 }

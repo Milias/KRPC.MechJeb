@@ -12,8 +12,14 @@ namespace KRPC.MechJeb {
 	public class ManeuverPlanner : Module {
 		internal const string MechJebType = "MuMech.MechJebModuleManeuverPlanner";
 
-		// Fields and methods
-		private static FieldInfo operationsField;
+		// Fields and methods.
+		//
+		// MechJeb 2.15 removed the `operation` (Operation[]) field on
+		// MechJebModuleManeuverPlanner and replaced it with `_operationId`
+		// (an int index into the static `Operation.GetAvailableOperations()`
+		// array). To keep the bridge's Op-by-name lookup working, we now
+		// invoke the static method instead of reading an instance field.
+		private static MethodInfo getAvailableOperationsMethod;
 
 		// Instance objects
 		private readonly Dictionary<string, Operation> operations = new Dictionary<string, Operation>();
@@ -38,11 +44,28 @@ namespace KRPC.MechJeb {
 		}
 
 		internal static void InitType(Type type) {
-			operationsField = type.GetCheckedField("operation", BindingFlags.NonPublic | BindingFlags.Instance);
+			// `type` is MuMech.MechJebModuleManeuverPlanner. The static
+			// MuMech.Operation.GetAvailableOperations() is on a sibling
+			// type in the same assembly.
+			Type operationType = type.Assembly.GetType("MuMech.Operation");
+			if (operationType == null) {
+				string err = "MuMech.Operation type not found in MechJeb assembly";
+				Logger.Severe(err);
+				MechJeb.errors.Add(err);
+				return;
+			}
+			getAvailableOperationsMethod = operationType.GetCheckedMethod(
+				"GetAvailableOperations",
+				BindingFlags.Public | BindingFlags.Static);
 		}
 
 		protected internal override void InitInstance(object instance) {
-			Dictionary<string, object> operations = instance != null ? ((object[])operationsField.GetValue(instance)).ToDictionary(el => el.GetType().FullName, el => el) : new Dictionary<string, object>();
+			Dictionary<string, object> operations =
+				instance != null && getAvailableOperationsMethod != null
+					? ((Array)getAvailableOperationsMethod.Invoke(null, null))
+						.Cast<object>()
+						.ToDictionary(el => el.GetType().FullName, el => el)
+					: new Dictionary<string, object>();
 
 			foreach(KeyValuePair<string, Operation> p in this.operations) {
 				string operationType = "MuMech." + p.Key;

@@ -34,8 +34,11 @@ namespace KRPC.MechJeb.Maneuver {
 		protected internal object instance;
 
 		internal static void InitType(Type type) {
-			errorMessage = type.GetCheckedMethod("getErrorMessage");
-			makeNodesImpl = type.GetCheckedMethod("MakeNodesImpl");
+			errorMessage = type.GetCheckedMethod("GetErrorMessage");
+			// MakeNodesImpl is `protected abstract` in MechJeb 2.15 — need
+			// NonPublic|Instance to find it via reflection.
+			makeNodesImpl = type.GetCheckedMethod("MakeNodesImpl",
+				BindingFlags.NonPublic | BindingFlags.Instance);
 		}
 
 		protected internal virtual void InitInstance(object instance) {
@@ -119,13 +122,29 @@ namespace KRPC.MechJeb.Maneuver {
 			this.TimeSelector = new TimeSelector();
 		}
 
+		// MechJeb 2.15 made the per-op TimeSelector private and renamed it
+		// to `_timeSelector`. Most ops declare it `private static readonly`
+		// but some (OperationResonantOrbit) keep it `private readonly`
+		// (instance) — try static first, then fall back to instance.
 		protected static FieldInfo GetTimeSelectorField(Type type) {
-			// Need to do it this way because MechJeb does not have a separate TimedOperation class. Instead, the field is duplicated where needed.
-			return type.GetCheckedField("timeSelector", BindingFlags.NonPublic | BindingFlags.Instance);
+			FieldInfo f = type.GetField("_timeSelector",
+				BindingFlags.NonPublic | BindingFlags.Static);
+			if (f == null)
+				f = type.GetField("_timeSelector",
+					BindingFlags.NonPublic | BindingFlags.Instance);
+			if (f == null) {
+				string err = type + "._timeSelector not found";
+				Logger.Severe(err);
+				MechJeb.errors.Add(err);
+			}
+			return f;
 		}
 
 		protected void InitTimeSelector(FieldInfo timeSelector) {
-			this.TimeSelector.InitInstance(timeSelector.GetInstanceValue(this.instance));
+			if (timeSelector == null) return;
+			// Static-field path passes null; instance-field path needs `this.instance`.
+			object owner = timeSelector.IsStatic ? null : this.instance;
+			this.TimeSelector.InitInstance(timeSelector.GetValue(owner));
 		}
 
 		[KRPCProperty]

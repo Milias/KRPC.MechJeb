@@ -1,3 +1,21 @@
+// AscentAutopilot — ported to MechJeb 2.15.
+//
+// In MechJeb 2.15 the old MechJebModuleAscentAutopilot was retired. The
+// public configuration surface now lives on MechJebModuleAscentSettings;
+// the runtime autopilot state (Status, TimedLaunch, StartCountdown) lives
+// on the abstract MechJebModuleAscentBaseAutopilot, with the concrete
+// per-path instances exposed as AscentSettings.AscentAutopilot (a
+// property that returns whichever of MechJebModuleAscentClassicAutopilot
+// / MechJebModuleAscentPSGAutopilot matches the current AscentType).
+//
+// This kRPC class binds to the AscentSettings instance directly and
+// dispatches runtime calls through AscentSettings.AscentAutopilot. The
+// path-specific bridge classes (AscentClassic / AscentPSG) also share
+// the same AscentSettings instance — they expose subsets of its fields.
+//
+// AscentPathGT is gone (MechJeb 2.15 removed the gravity-turn variant).
+// AscentPathIndex is now a 2-value enum: 0 = CLASSIC, 1 = PSG.
+
 using System;
 using System.Reflection;
 
@@ -6,58 +24,21 @@ using KRPC.MechJeb.Util;
 using KRPC.Service.Attributes;
 
 namespace KRPC.MechJeb {
-	internal static class AscentGuidance {
-		internal new const string MechJebType = "MuMech.MechJebModuleAscentGuidance";
-
-		// Fields and methods
-		internal static FieldInfo desiredInclination;
-		internal static FieldInfo launchingToPlane;
-		internal static FieldInfo launchingToRendezvous;
-
-		internal static void InitType(Type type) {
-			desiredInclination = type.GetField("desiredInclination");
-			launchingToPlane = type.GetField("launchingToPlane");
-			launchingToRendezvous = type.GetField("launchingToRendezvous");
-		}
-	}
-
 	/// <summary>
-	/// This module controls the Ascent Guidance in MechJeb 2.
+	/// Drives MechJeb 2.15's Ascent Guidance. Config (target orbit, force
+	/// roll, AoA limits, etc.) lives on MechJebModuleAscentSettings; runtime
+	/// status comes from the currently-active concrete autopilot
+	/// (Classic or PSG) selected by <see cref="AscentPathIndex"/>.
 	/// </summary>
-	/// <remarks>
-	/// See <a href="https://github.com/MuMech/MechJeb2/wiki/Ascent-Guidance#initial-pitch-over-issues">MechJeb2 wiki</a> for more guidance on how to optimally set up this autopilot.
-	/// </remarks>
 	[KRPCClass(Service = "MechJeb")]
 	public class AscentAutopilot : KRPCComputerModule {
-		internal new const string MechJebType = "MuMech.MechJebModuleAscentAutopilot";
+		// No `MechJebType` const here: reflection for the underlying
+		// MechJebModuleAscentSettings type happens once in
+		// AscentSettingsBinding (and only one bridge type can claim each
+		// MuMech.* key — duplicates collide in MechJeb.InitTypes()).
+		// InitInstance is called manually from MechJeb.cs's modules dict.
 
-		// Fields and methods
-		private static FieldInfo status;
-		private static PropertyInfo ascentPathIdx;
-		private static FieldInfo desiredOrbitAltitudeField;
-		private static FieldInfo autoThrottle;
-		private static FieldInfo correctiveSteering;
-		private static FieldInfo correctiveSteeringGainField;
-		private static FieldInfo forceRoll;
-		private static FieldInfo verticalRollField;
-		private static FieldInfo turnRollField;
-		private static FieldInfo autodeploySolarPanels;
-		private static FieldInfo autoDeployAntennas;
-		private static FieldInfo skipCircularization;
-		private static PropertyInfo autostage;
-		private static FieldInfo limitAoA;
-		private static FieldInfo maxAoAField;
-		private static FieldInfo aoALimitFadeoutPressureField;
-		private static FieldInfo launchPhaseAngleField;
-		private static FieldInfo launchLANDifferenceField;
-		private static FieldInfo warpCountDownField;
-
-		private static FieldInfo timedLaunch;
-		private static MethodInfo startCountdown;
-
-		// Instance objects
-		private object guiInstance;
-
+		// EditableDouble / EditableInt holders on AscentSettings.
 		private object desiredOrbitAltitude;
 		private object correctiveSteeringGain;
 		private object verticalRoll;
@@ -67,241 +48,190 @@ namespace KRPC.MechJeb {
 		private object launchPhaseAngle;
 		private object launchLANDifference;
 		private object warpCountDown;
+		// EditableDouble for inclination lives on AscentSettings too in 2.15
+		// (used to live on AscentGuidance.desiredInclination).
+		private object desiredInclination;
 
-		internal static new void InitType(Type type) {
-			status = type.GetCheckedField("status");
-			ascentPathIdx = type.GetCheckedProperty("ascentPathIdxPublic");
-			desiredOrbitAltitudeField = type.GetCheckedField("desiredOrbitAltitude");
-			autoThrottle = type.GetCheckedField("autoThrottle");
-			correctiveSteering = type.GetCheckedField("correctiveSteering");
-			correctiveSteeringGainField = type.GetCheckedField("correctiveSteeringGain");
-			forceRoll = type.GetCheckedField("forceRoll");
-			verticalRollField = type.GetCheckedField("verticalRoll");
-			turnRollField = type.GetCheckedField("turnRoll");
-			autodeploySolarPanels = type.GetCheckedField("autodeploySolarPanels");
-			autoDeployAntennas = type.GetCheckedField("autoDeployAntennas");
-			skipCircularization = type.GetCheckedField("skipCircularization");
-			autostage = type.GetCheckedProperty("autostage");
-			limitAoA = type.GetCheckedField("limitAoA");
-			maxAoAField = type.GetCheckedField("maxAoA");
-			aoALimitFadeoutPressureField = type.GetCheckedField("aoALimitFadeoutPressure");
-			launchPhaseAngleField = type.GetCheckedField("launchPhaseAngle");
-			launchLANDifferenceField = type.GetCheckedField("launchLANDifference");
-			warpCountDownField = type.GetCheckedField("warpCountDown");
-
-			timedLaunch = type.GetCheckedField("timedLaunch");
-			startCountdown = type.GetCheckedMethod("StartCountdown");
-		}
+		// AscentSettings.AscentAutopilot is a property — we re-resolve each
+		// read because the user may change AscentType at runtime.
+		private object ActiveAutopilot =>
+			AscentSettingsBinding.ascentAutopilotProp.GetValue(this.instance, null);
 
 		protected internal override void InitInstance(object instance) {
 			base.InitInstance(instance);
-			this.guiInstance = MechJeb.GetComputerModule("AscentGuidance");
 
-			this.desiredOrbitAltitude = desiredOrbitAltitudeField.GetInstanceValue(instance);
-			this.correctiveSteeringGain = correctiveSteeringGainField.GetInstanceValue(instance);
-			this.verticalRoll = verticalRollField.GetInstanceValue(instance);
-			this.turnRoll = turnRollField.GetInstanceValue(instance);
-			this.maxAoA = maxAoAField.GetInstanceValue(instance);
-			this.aoALimitFadeoutPressure = aoALimitFadeoutPressureField.GetInstanceValue(instance);
-			this.launchPhaseAngle = launchPhaseAngleField.GetInstanceValue(instance);
-			this.launchLANDifference = launchLANDifferenceField.GetInstanceValue(instance);
-			this.warpCountDown = warpCountDownField.GetInstanceValue(instance);
+			this.desiredOrbitAltitude    = AscentSettingsBinding.desiredOrbitAltitude.GetInstanceValue(instance);
+			this.desiredInclination      = AscentSettingsBinding.desiredInclination.GetInstanceValue(instance);
+			this.correctiveSteeringGain  = AscentSettingsBinding.correctiveSteeringGain.GetInstanceValue(instance);
+			this.verticalRoll            = AscentSettingsBinding.verticalRoll.GetInstanceValue(instance);
+			this.turnRoll                = AscentSettingsBinding.turnRoll.GetInstanceValue(instance);
+			this.maxAoA                  = AscentSettingsBinding.maxAoA.GetInstanceValue(instance);
+			this.aoALimitFadeoutPressure = AscentSettingsBinding.aoALimitFadeoutPressure.GetInstanceValue(instance);
+			this.launchPhaseAngle        = AscentSettingsBinding.launchPhaseAngle.GetInstanceValue(instance);
+			this.launchLANDifference     = AscentSettingsBinding.launchLANDifference.GetInstanceValue(instance);
+			this.warpCountDown           = AscentSettingsBinding.warpCountDown.GetInstanceValue(instance);
 
-			this.AscentPathClassic.InitInstance(MechJeb.GetComputerModule("AscentClassic"));
-			this.AscentPathGT.InitInstance(MechJeb.GetComputerModule("AscentGT"));
-			this.AscentPathPVG.InitInstance(MechJeb.GetComputerModule("AscentPVG"));
+			// AscentSettings is the shared backing store for the per-path
+			// settings classes below; they all bind to the same instance.
+			this.AscentPathClassic.InitInstance(instance);
+			this.AscentPathPSG.InitInstance(instance);
 
-			// Retrieve the current path index set in mechjeb and enable the path representing that index.
-			// It fixes the issue with AscentAutopilot reporting empty status due to a disabled path.
-			if(instance != null)
+			// Re-apply current ascent type so the right concrete autopilot
+			// is enabled / disabled consistently with what the user has set.
+			if (instance != null)
 				this.AscentPathIndex = this.AscentPathIndex;
 		}
 
 		public AscentAutopilot() {
 			this.AscentPathClassic = new AscentClassic();
-			this.AscentPathGT = new AscentGT();
-			this.AscentPathPVG = new AscentPVG();
+			this.AscentPathPSG     = new AscentPSG();
 		}
 
 		/// <summary>
-		/// The autopilot status; it depends on the selected ascent path.
+		/// Enable / disable the autopilot. Delegates to whichever concrete
+		/// autopilot is currently active (Classic or PSG) — both Classic
+		/// and PSG instances are always loaded; only the one matching the
+		/// current AscentType actually runs.
 		/// </summary>
 		[KRPCProperty]
-		public string Status => status.GetValue(this.instance).ToString();
-
-		/// <summary>
-		/// The selected ascent path.
-		/// 
-		/// 0 = <see cref="AscentClassic" /> (Classic Ascent Profile)
-		/// 
-		/// 1 = <see cref="AscentGT" /> (Stock-style GravityTurn)
-		/// 
-		/// 2 = <see cref="AscentPVG" /> (Primer Vector Guidance (RSS/RO))
-		/// </summary>
-		[KRPCProperty]
-		public int AscentPathIndex {
-			get => (int)ascentPathIdx.GetValue(this.instance, null);
+		public override bool Enabled {
+			get {
+				object active = this.ActiveAutopilot;
+				return active != null && (bool)enabled.GetValue(active, null);
+			}
 			set {
-				if(value < 0 || value > 2)
-					return;
-
-				ascentPathIdx.SetValue(this.instance, value, null);
+				object active = this.ActiveAutopilot;
+				if (active == null) return;
+				object activeUsers = usersField.GetValue(active);
+				MethodInfo m = value ? UserPool.usersAdd : UserPool.usersRemove;
+				m.Invoke(activeUsers, new object[] { active });
 			}
 		}
 
 		/// <summary>
-		/// Get Classic Ascent Profile settings.
+		/// The autopilot status string (depends on which ascent path is active).
 		/// </summary>
+		[KRPCProperty]
+		public string Status {
+			get {
+				object active = this.ActiveAutopilot;
+				return active != null
+					? (string)AscentBaseAutopilotBinding.status.GetValue(active)
+					: "";
+			}
+		}
+
+		/// <summary>
+		/// The selected ascent path.
+		///
+		/// 0 = <see cref="AscentClassic" /> (Classic Ascent Profile)
+		///
+		/// 1 = <see cref="AscentPSG" /> (Powered Soft-landing Guidance — formerly PVG)
+		/// </summary>
+		[KRPCProperty]
+		public int AscentPathIndex {
+			get => (int)AscentSettingsBinding.ascentTypeInteger.GetValue(this.instance);
+			set {
+				if (value < 0 || value > 1)
+					return;
+				AscentSettingsBinding.ascentTypeInteger.SetValue(this.instance, value);
+			}
+		}
+
+		/// <summary>Classic Ascent Profile settings.</summary>
 		[KRPCProperty]
 		public AscentClassic AscentPathClassic { get; }
 
-		/// <summary>
-		/// Get Stock-style GravityTurn profile settings.
-		/// </summary>
+		/// <summary>PSG (RSS/RO) Ascent Profile settings.</summary>
 		[KRPCProperty]
-		public AscentGT AscentPathGT { get; }
+		public AscentPSG AscentPathPSG { get; }
 
-		/// <summary>
-		/// Get Powered Explicit Guidance (RSS/RO) profile settings.
-		/// </summary>
-		[KRPCProperty]
-		public AscentPVG AscentPathPVG { get; }
-
-		/// <summary>
-		/// The desired altitude in kilometres for the final circular orbit.
-		/// </summary>
 		[KRPCProperty]
 		public double DesiredOrbitAltitude {
 			get => EditableDouble.Get(this.desiredOrbitAltitude);
 			set => EditableDouble.Set(this.desiredOrbitAltitude, value);
 		}
 
-		/// <summary>
-		/// The desired inclination in degrees for the final circular orbit.
-		/// </summary>
 		[KRPCProperty]
 		public double DesiredInclination {
-			// We need to get desiredInclinationGUI value here because it may change over time.
-			get => EditableDouble.Get(AscentGuidance.desiredInclination, this.guiInstance);
-			set => EditableDouble.Set(AscentGuidance.desiredInclination, this.guiInstance, value);
+			get => EditableDouble.Get(this.desiredInclination);
+			set => EditableDouble.Set(this.desiredInclination, value);
 		}
 
 		/// <remarks>Equivalent to <see cref="MechJeb.ThrustController" />.</remarks>
 		[KRPCProperty]
 		public ThrustController ThrustController => MechJeb.ThrustController;
 
-		/// <summary>
-		/// Will cause the craft to steer based on the more accurate velocity vector rather than positional vector (large craft may actually perform better with this box unchecked).
-		/// </summary>
 		[KRPCProperty]
 		public bool CorrectiveSteering {
-			get => (bool)correctiveSteering.GetValue(this.instance);
-			set => correctiveSteering.SetValue(this.instance, value);
+			get => (bool)AscentSettingsBinding.correctiveSteering.GetValue(this.instance);
+			set => AscentSettingsBinding.correctiveSteering.SetValue(this.instance, value);
 		}
 
-		/// <summary>
-		/// The gain of corrective steering used by the autopilot.
-		/// </summary>
-		/// <remarks><see cref="CorrectiveSteering" /> needs to be enabled.</remarks>
 		[KRPCProperty]
 		public double CorrectiveSteeringGain {
 			get => EditableDouble.Get(this.correctiveSteeringGain);
 			set => EditableDouble.Set(this.correctiveSteeringGain, value);
 		}
 
-		/// <summary>
-		/// The state of force roll.
-		/// </summary>
 		[KRPCProperty]
 		public bool ForceRoll {
-			get => (bool)forceRoll.GetValue(this.instance);
-			set => forceRoll.SetValue(this.instance, value);
+			get => (bool)AscentSettingsBinding.forceRoll.GetValue(this.instance);
+			set => AscentSettingsBinding.forceRoll.SetValue(this.instance, value);
 		}
 
-		/// <summary>
-		/// The vertical/climb roll used by the autopilot.
-		/// </summary>
-		/// <remarks><see cref="ForceRoll" /> needs to be enabled.</remarks>
 		[KRPCProperty]
 		public double VerticalRoll {
 			get => EditableDouble.Get(this.verticalRoll);
 			set => EditableDouble.Set(this.verticalRoll, value);
 		}
 
-		/// <summary>
-		/// The turn roll used by the autopilot.
-		/// </summary>
-		/// <remarks><see cref="ForceRoll" /> needs to be enabled.</remarks>
 		[KRPCProperty]
 		public double TurnRoll {
 			get => EditableDouble.Get(this.turnRoll);
 			set => EditableDouble.Set(this.turnRoll, value);
 		}
 
-		/// <summary>
-		/// Whether to deploy solar panels automatically when the ascent finishes.
-		/// </summary>
 		[KRPCProperty]
 		public bool AutodeploySolarPanels {
-			get => (bool)autodeploySolarPanels.GetValue(this.instance);
-			set => autodeploySolarPanels.SetValue(this.instance, value);
+			get => (bool)AscentSettingsBinding.autoDeploySolarPanels.GetValue(this.instance);
+			set => AscentSettingsBinding.autoDeploySolarPanels.SetValue(this.instance, value);
 		}
 
-		/// <summary>
-		/// Whether to deploy antennas automatically when the ascent finishes.
-		/// </summary>
 		[KRPCProperty]
 		public bool AutoDeployAntennas {
-			get => (bool)autoDeployAntennas.GetValue(this.instance);
-			set => autoDeployAntennas.SetValue(this.instance, value);
+			get => (bool)AscentSettingsBinding.autoDeployAntennas.GetValue(this.instance);
+			set => AscentSettingsBinding.autoDeployAntennas.SetValue(this.instance, value);
 		}
 
-		/// <summary>
-		/// Whether to skip circularization burn and do only the ascent.
-		/// </summary>
 		[KRPCProperty]
 		public bool SkipCircularization {
-			get => (bool)skipCircularization.GetValue(this.instance);
-			set => skipCircularization.SetValue(this.instance, value);
+			get => (bool)AscentSettingsBinding.skipCircularization.GetValue(this.instance);
+			set => AscentSettingsBinding.skipCircularization.SetValue(this.instance, value);
 		}
 
-		/// <summary>
-		/// The autopilot will automatically stage when the current stage has run out of fuel.
-		/// Paramethers can be set in <see cref="KRPC.MechJeb.StagingController" />.
-		/// </summary>
 		[KRPCProperty]
 		public bool Autostage {
-			get => (bool)autostage.GetValue(this.instance, null);
-			set => autostage.SetValue(this.instance, value, null);
+			get => (bool)AscentSettingsBinding.autostage.GetValue(this.instance, null);
+			set => AscentSettingsBinding.autostage.SetValue(this.instance, value, null);
 		}
 
 		/// <remarks>Equivalent to <see cref="MechJeb.StagingController" />.</remarks>
 		[KRPCProperty]
 		public StagingController StagingController => MechJeb.StagingController;
 
-		/// <summary>
-		/// Whether to limit angle of attack.
-		/// </summary>
 		[KRPCProperty]
 		public bool LimitAoA {
-			get => (bool)limitAoA.GetValue(this.instance);
-			set => limitAoA.SetValue(this.instance, value);
+			get => (bool)AscentSettingsBinding.limitAoA.GetValue(this.instance);
+			set => AscentSettingsBinding.limitAoA.SetValue(this.instance, value);
 		}
 
-		/// <summary>
-		/// The maximal angle of attack used by the autopilot.
-		/// </summary>
-		/// <remarks><see cref="LimitAoA" /> needs to be enabled</remarks>
 		[KRPCProperty]
 		public double MaxAoA {
 			get => EditableDouble.Get(this.maxAoA);
 			set => EditableDouble.Set(this.maxAoA, value);
 		}
 
-		/// <summary>
-		/// The pressure value when AoA limit is automatically deactivated.
-		/// </summary>
-		/// <remarks><see cref="LimitAoA" /> needs to be enabled</remarks>
 		[KRPCProperty]
 		public double AoALimitFadeoutPressure {
 			get => EditableDouble.Get(this.aoALimitFadeoutPressure);
@@ -327,77 +257,79 @@ namespace KRPC.MechJeb {
 		}
 
 		/// <summary>
-		/// Current autopilot mode. Useful for determining whether the autopilot is performing a timed launch or not.
+		/// Current autopilot launch mode. Useful for determining whether the
+		/// autopilot is performing a timed launch.
 		/// </summary>
 		[KRPCProperty]
 		public AscentLaunchMode LaunchMode {
 			get {
-				if(!(bool)timedLaunch.GetValue(this.instance))
+				object active = this.ActiveAutopilot;
+				if (active == null || !(bool)AscentBaseAutopilotBinding.timedLaunch.GetValue(active))
 					return AscentLaunchMode.Normal;
-				if((bool)AscentGuidance.launchingToRendezvous.GetValue(this.guiInstance))
+				if ((bool)AscentSettingsBinding.launchingToRendezvous.GetValue(this.instance))
 					return AscentLaunchMode.Rendezvous;
-				if((bool)AscentGuidance.launchingToPlane.GetValue(this.guiInstance))
+				if ((bool)AscentSettingsBinding.launchingToPlane.GetValue(this.instance))
 					return AscentLaunchMode.TargetPlane;
 				return AscentLaunchMode.Unknown;
 			}
 		}
 
-		/// <summary>
-		/// Abort a known timed launch when it has not started yet
-		/// </summary>
 		[KRPCMethod]
 		public void AbortTimedLaunch() {
-			if(this.LaunchMode == AscentLaunchMode.Unknown)
+			if (this.LaunchMode == AscentLaunchMode.Unknown)
 				throw new InvalidOperationException("There is an unknown timed launch ongoing which can't be aborted");
 
-			AscentGuidance.launchingToPlane.SetValue(this.guiInstance, false);
-			AscentGuidance.launchingToRendezvous.SetValue(this.guiInstance, false);
-			timedLaunch.SetValue(this.instance, false);
+			AscentSettingsBinding.launchingToPlane.SetValue(this.instance, false);
+			AscentSettingsBinding.launchingToRendezvous.SetValue(this.instance, false);
+			object active = this.ActiveAutopilot;
+			if (active != null)
+				AscentBaseAutopilotBinding.timedLaunch.SetValue(active, false);
 		}
 
 		private void StartCountdown(double timeOffset) {
-			startCountdown.Invoke(this.instance, new object[] { MechJeb.vesselState.Time + timeOffset });
+			object active = this.ActiveAutopilot;
+			if (active == null)
+				throw new InvalidOperationException("No active ascent autopilot");
+			AscentBaseAutopilotBinding.startCountdown.Invoke(
+				active,
+				new object[] { MechJeb.vesselState.Time + timeOffset });
 		}
 
-		/// <summary>
-		/// Launch to rendezvous with the selected target.
-		/// </summary>
+		/// <summary>Launch to rendezvous with the selected target.</summary>
 		[KRPCMethod]
 		public void LaunchToRendezvous() {
-			if(!MechJeb.TargetController.NormalTargetExists)
+			if (!MechJeb.TargetController.NormalTargetExists)
 				throw new InvalidOperationException("Invalid target");
-			if(this.AscentPathIndex == 2)
-				throw new InvalidOperationException("This action can't be performed in PVG path mode");
+			if (this.AscentPathIndex == 1)
+				throw new InvalidOperationException("This action can't be performed in PSG path mode");
 
 			this.AbortTimedLaunch();
 			try {
-				AscentGuidance.launchingToRendezvous.SetValue(this.guiInstance, true);
+				AscentSettingsBinding.launchingToRendezvous.SetValue(this.instance, true);
 				this.StartCountdown(LaunchTiming.TimeToPhaseAngle(this.LaunchPhaseAngle));
 			}
-			catch(Exception) {
+			catch (Exception) {
 				this.AbortTimedLaunch();
 				throw;
 			}
 		}
 
-		/// <summary>
-		/// Launch into the plane of the selected target.
-		/// </summary>
+		/// <summary>Launch into the plane of the selected target.</summary>
 		[KRPCMethod]
 		public void LaunchToTargetPlane() {
-			if(!MechJeb.TargetController.NormalTargetExists)
+			if (!MechJeb.TargetController.NormalTargetExists)
 				throw new InvalidOperationException("Invalid target");
 
 			this.AbortTimedLaunch();
 			try {
 				Orbit target = MechJeb.TargetController.InternalTargetOrbit;
-				AscentGuidance.launchingToPlane.SetValue(this.guiInstance, true);
+				AscentSettingsBinding.launchingToPlane.SetValue(this.instance, true);
 
 				Tuple<double, double> item = MathFunctions.MinimumTimeToPlane(target.LAN - this.LaunchLANDifference, target.inclination);
 				this.StartCountdown(item.Item1);
 				this.DesiredInclination = item.Item2;
 			}
-			catch(Exception) {
+			catch (Exception) {
 				this.AbortTimedLaunch();
 				throw;
 			}
@@ -405,27 +337,21 @@ namespace KRPC.MechJeb {
 
 		[KRPCEnum(Service = "MechJeb")]
 		public enum AscentLaunchMode {
-			/// <summary>
-			/// The autopilot is not performing a timed launch.
-			/// </summary>
+			/// <summary>The autopilot is not performing a timed launch.</summary>
 			Normal,
-
-			/// <summary>
-			/// The autopilot is performing a timed launch to rendezvous with the target vessel.
-			/// </summary>
+			/// <summary>The autopilot is performing a timed launch to rendezvous with the target.</summary>
 			Rendezvous,
-
-			/// <summary>
-			/// The autopilot is performing a timed launch to target plane.
-			/// </summary>
+			/// <summary>The autopilot is performing a timed launch to target plane.</summary>
 			TargetPlane,
-
-			/// <summary>
-			/// The autopilot is performing an unknown timed launch.
-			/// </summary>
+			/// <summary>The autopilot is performing an unknown timed launch.</summary>
 			Unknown = 99
 		}
 	}
 
+	/// <summary>
+	/// Path-specific bridge classes share the same backing AscentSettings
+	/// instance — they bind to subsets of its fields. AscentBase here is
+	/// just a marker; the real backing is AscentSettings.
+	/// </summary>
 	public abstract class AscentBase : ComputerModule { }
 }

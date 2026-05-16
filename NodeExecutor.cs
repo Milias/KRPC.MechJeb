@@ -9,10 +9,11 @@ namespace KRPC.MechJeb {
 	public class NodeExecutor : ComputerModule {
 		internal new const string MechJebType = "MuMech.MechJebModuleNodeExecutor";
 
-		// Fields and methods
+		// Fields and methods. MechJeb 2.15 dropped the public `tolerance`
+		// field on NodeExecutor; the burn-finish criterion is now baked
+		// into the executor's internal state machine, no longer a knob.
 		private static FieldInfo autowarp;
 		private static FieldInfo leadTimeField;
-		private static FieldInfo toleranceField;
 
 		private static MethodInfo executeOneNode;
 		private static MethodInfo executeAllNodes;
@@ -20,12 +21,10 @@ namespace KRPC.MechJeb {
 
 		// Instance objects
 		private object leadTime;
-		private object tolerance;
 
 		internal static new void InitType(Type type) {
-			autowarp = type.GetCheckedField("autowarp");
-			leadTimeField = type.GetCheckedField("leadTime");
-			toleranceField = type.GetCheckedField("tolerance");
+			autowarp = type.GetCheckedField("Autowarp");
+			leadTimeField = type.GetCheckedField("LeadTime");
 
 			executeOneNode = type.GetCheckedMethod("ExecuteOneNode");
 			executeAllNodes = type.GetCheckedMethod("ExecuteAllNodes");
@@ -36,7 +35,6 @@ namespace KRPC.MechJeb {
 			base.InitInstance(instance);
 
 			this.leadTime = leadTimeField.GetInstanceValue(instance);
-			this.tolerance = toleranceField.GetInstanceValue(instance);
 		}
 
 		[KRPCProperty]
@@ -52,12 +50,6 @@ namespace KRPC.MechJeb {
 		public double LeadTime {
 			get => EditableDouble.Get(this.leadTime);
 			set => EditableDouble.Set(this.leadTime, value);
-		}
-
-		[KRPCProperty]
-		public double Tolerance {
-			get => EditableDouble.Get(this.tolerance);
-			set => EditableDouble.Set(this.tolerance, value);
 		}
 
 		[KRPCMethod]

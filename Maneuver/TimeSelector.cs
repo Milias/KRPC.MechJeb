@@ -96,16 +96,28 @@ namespace KRPC.MechJeb.Maneuver {
 		private object circularizeAltitude;
 
 		internal static void InitType(Type type) {
-			allowedTimeRefField = type.GetCheckedField("allowedTimeRef", BindingFlags.NonPublic | BindingFlags.Instance);
-			currentTimeRef = type.GetCheckedField("currentTimeRef", BindingFlags.NonPublic | BindingFlags.Instance);
-			leadTimeField = type.GetCheckedField("leadTime");
-			circularizeAltitudeField = type.GetCheckedField("circularizeAltitude");
+			// MechJeb 2.15: both fields gained a leading underscore;
+			// `_allowedTimeRef` is private, `_currentTimeRef` became public
+			// (still bound via NonPublic|Public for forward compat).
+			allowedTimeRefField = type.GetCheckedField("_allowedTimeRef",
+				BindingFlags.NonPublic | BindingFlags.Instance);
+			currentTimeRef = type.GetCheckedField("_currentTimeRef",
+				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+			leadTimeField = type.GetCheckedField("LeadTime");
+			circularizeAltitudeField = type.GetCheckedField("CircularizeAltitude");
 		}
 
 		protected internal void InitInstance(object instance) {
 			this.instance = instance;
 
-			this.allowedTimeRef = (int[])allowedTimeRefField.GetInstanceValue(instance);
+			// In 2.15 the field is TimeReference[] (an enum array) — cast
+			// element-wise to int rather than relying on Array variance,
+			// which doesn't allow `(int[]) (TimeReference[])` at runtime.
+			Array timeRefs = (Array)allowedTimeRefField.GetInstanceValue(instance);
+			this.allowedTimeRef = new int[timeRefs.Length];
+			for (int i = 0; i < timeRefs.Length; i++)
+				this.allowedTimeRef[i] = (int)timeRefs.GetValue(i);
+
 			this.leadTime = leadTimeField.GetInstanceValue(instance);
 			this.circularizeAltitude = circularizeAltitudeField.GetInstanceValue(instance);
 		}

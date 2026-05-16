@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 
 using KRPC.MechJeb.ExtensionMethods;
@@ -11,7 +12,7 @@ namespace KRPC.MechJeb {
 		private static PropertyInfo value;
 
 		internal static void InitType(Type type) {
-			value = type.GetCheckedProperty("val");
+			value = type.GetCheckedProperty("Val");
 		}
 
 		public static double Get(object instance) {
@@ -35,22 +36,55 @@ namespace KRPC.MechJeb {
 	public static class EditableInt {
 		internal const string MechJebType = "MuMech.EditableInt";
 
-		// Fields and methods
-		private static FieldInfo value;
-		private static FieldInfo text;
+		// Fields and methods. In MechJeb 2.15 both `Val` and `Text` became
+		// properties (was: public field `val` + private field `_text`). The
+		// Val setter auto-updates the backing TextConfig string, so we
+		// don't have to set Text separately.
+		private static PropertyInfo value;
 
 		internal static void InitType(Type type) {
-			value = type.GetCheckedField("val");
-			text = type.GetCheckedField("_text");
+			value = type.GetCheckedProperty("Val");
 		}
 
 		public static int Get(object instance) {
-			return (int)value.GetValue(instance);
+			return (int)value.GetValue(instance, null);
 		}
 
 		public static void Set(object instance, int value) {
-			EditableInt.value.SetValue(instance, value);
-			text.SetValue(instance, value.ToString());
+			EditableInt.value.SetValue(instance, value, null);
+		}
+	}
+
+	/// <summary>
+	/// MuMech.EditableIntList wraps a `List&lt;int&gt; Val` plus a text-parsing
+	/// setter ("1,2,3" / "1-3"). PSG uses this for UnguidedStages and
+	/// FixedStages — collections of KSP stage indices that PSG should
+	/// treat specially. Read returns the backing List by reference (which
+	/// kRPC then serializes); Set replaces its contents in place so the
+	/// EditableIntList instance the GUI is watching stays the same.
+	/// </summary>
+	public static class EditableIntList {
+		internal const string MechJebType = "MuMech.EditableIntList";
+
+		// `Val` is a public readonly List<int> field on MuMech.EditableIntList
+		// in 2.15 (not a property — different shape from EditableInt/Double).
+		private static FieldInfo valField;
+
+		internal static void InitType(Type type) {
+			valField = type.GetCheckedField("Val");
+		}
+
+		public static IList<int> Get(object instance) {
+			return (IList<int>)valField.GetValue(instance);
+		}
+
+		public static void Set(object instance, IList<int> values) {
+			List<int> backing = (List<int>)valField.GetValue(instance);
+			backing.Clear();
+			if (values != null) {
+				foreach (int v in values)
+					backing.Add(v);
+			}
 		}
 	}
 
@@ -61,7 +95,7 @@ namespace KRPC.MechJeb {
 		private static PropertyInfo value;
 
 		internal static void InitType(Type type) {
-			value = type.GetCheckedProperty("value");
+			value = type.GetCheckedProperty("Value");
 		}
 
 		public static double Get(object instance) {

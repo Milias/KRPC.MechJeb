@@ -16,7 +16,9 @@ namespace KRPC.MechJeb.Maneuver {
 		private static FieldInfo waitForPhaseAngle;
 
 		internal static new void InitType(Type type) {
-			waitForPhaseAngle = type.GetCheckedField("waitForPhaseAngle", BindingFlags.NonPublic | BindingFlags.Instance);
+			// 2.15: `public bool WaitForPhaseAngle` — public, no need for
+			// NonPublic flag (which would *exclude* it).
+			waitForPhaseAngle = type.GetCheckedField("WaitForPhaseAngle");
 		}
 
 		[KRPCProperty]

@@ -72,12 +72,19 @@ namespace KRPC.MechJeb {
 
 		internal static void InitType(Type t) {
 			type = t;
-			vesselStateField = t.GetCheckedField("vesselState");
+			vesselStateField = t.GetCheckedField("VesselState");
 			getComputerModule = t.GetCheckedMethod("GetComputerModule", new Type[] { typeof(string) });
 
-			// MechJeb found, create module instances
-			modules.Add("AirplaneAutopilot", new AirplaneAutopilot());
-			modules.Add("AscentAutopilot", new AscentAutopilot());
+			// MechJeb found, create module instances.
+			//
+			// MechJeb 2.15 split the old MechJebModuleAscentAutopilot into
+			// AscentSettings + AscentBaseAutopilot + Classic/PSG concrete
+			// variants. Our AscentAutopilot bridge binds to AscentSettings
+			// (the config root) and dispatches runtime calls to whichever
+			// concrete autopilot AscentSettings.AscentAutopilot returns.
+			// MechJebModuleAirplaneAutopilot was removed entirely with no
+			// replacement, so no kRPC binding for airplane control.
+			modules.Add("AscentSettings", new AscentAutopilot());
 			modules.Add("DockingAutopilot", new DockingAutopilot());
 			modules.Add("LandingAutopilot", new LandingAutopilot());
 			modules.Add("RendezvousAutopilot", new RendezvousAutopilot());
@@ -160,12 +167,13 @@ namespace KRPC.MechJeb {
 		public static bool APIReady { get; private set; }
 
 		// AUTOPILOTS
+		//
+		// MechJebModuleAirplaneAutopilot was removed in MechJeb 2.15 with
+		// no replacement; the AirplaneAutopilot kRPC property is gone from
+		// this version of the bridge.
 
 		[KRPCProperty]
-		public static AirplaneAutopilot AirplaneAutopilot => (AirplaneAutopilot)modules["AirplaneAutopilot"];
-
-		[KRPCProperty]
-		public static AscentAutopilot AscentAutopilot => (AscentAutopilot)modules["AscentAutopilot"];
+		public static AscentAutopilot AscentAutopilot => (AscentAutopilot)modules["AscentSettings"];
 
 		[KRPCProperty]
 		public static DockingAutopilot DockingAutopilot => (DockingAutopilot)modules["DockingAutopilot"];

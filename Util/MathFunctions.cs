@@ -4,23 +4,28 @@ using System.Reflection;
 using KRPC.MechJeb.ExtensionMethods;
 
 namespace KRPC.MechJeb.Util {
+	// LaunchTiming (MuMech.LaunchTiming) was removed in MechJeb 2.15. Its
+	// only entry point, `TimeToPhaseAngle`, is now a *private static*
+	// method on MechJebModuleAscentMenu. We reflect into it via
+	// AscentMenuBinding (set up at type-load time in AscentBindings.cs);
+	// no MechJebType const here means InitTypes won't try to match this
+	// helper against a now-nonexistent MuMech type.
+
 	internal static class LaunchTiming {
-		internal const string MechJebType = "MuMech.LaunchTiming";
-
-		// Fields and methods
-		private static MethodInfo timeToPhaseAngle;
-
-		internal static void InitType(Type type) {
-			timeToPhaseAngle = type.GetCheckedMethod("TimeToPhaseAngle");
-		}
-
 		public static double TimeToPhaseAngle(double launchPhaseAngle) {
-			return (double)timeToPhaseAngle.Invoke(null, new object[] { launchPhaseAngle, FlightGlobals.ActiveVessel.mainBody, MechJeb.vesselState.Longitude, MechJeb.TargetController.TargetOrbit.InternalOrbit });
+			return (double)AscentMenuBinding.timeToPhaseAngle.Invoke(
+				null,
+				new object[] {
+					launchPhaseAngle,
+					FlightGlobals.ActiveVessel.mainBody,
+					MechJeb.vesselState.Longitude,
+					MechJeb.TargetController.TargetOrbit.InternalOrbit
+				});
 		}
 	}
 
 	internal static class MathFunctions {
-		internal const string MechJebType = "MechJebLib.Maths.Functions";
+		internal const string MechJebType = "MechJebLib.Functions.Astro";
 
 		// Fields and methods
 		private static MethodInfo timeToPlane;
