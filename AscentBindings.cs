@@ -184,12 +184,43 @@ namespace KRPC.MechJeb {
 
 		internal static FieldInfo status;
 		internal static FieldInfo timedLaunch;
+		/// Private `_mode` enum field on the base autopilot; values are
+		/// PRELAUNCH / ASCEND / CIRCULARIZE. Read via reflection.
+		internal static FieldInfo mode;
 		internal static MethodInfo startCountdown;
 
 		internal static void InitType(Type type) {
 			status         = type.GetCheckedField("Status");
 			timedLaunch    = type.GetCheckedField("TimedLaunch");
+			mode           = type.GetCheckedField("_mode", BindingFlags.NonPublic | BindingFlags.Instance);
 			startCountdown = type.GetCheckedMethod("StartCountdown");
+		}
+	}
+
+	/// Concrete Classic-path autopilot. Holds its own private `_mode`
+	/// (VERTICAL_ASCENT / GRAVITY_TURN / COAST_TO_APOAPSIS / EXIT)
+	/// independent of the base's PRELAUNCH/ASCEND/CIRCULARIZE.
+	internal static class AscentClassicAutopilotBinding {
+		internal const string MechJebType = "MuMech.MechJebModuleAscentClassicAutopilot";
+
+		internal static FieldInfo mode;
+
+		internal static void InitType(Type type) {
+			mode = type.GetCheckedField("_mode", BindingFlags.NonPublic | BindingFlags.Instance);
+		}
+	}
+
+	/// Concrete PSG-path autopilot. Holds its own private `_mode`
+	/// (VERTICAL_ASCENT / PITCHPROGRAM / ZEROLIFT / GUIDANCE / EXIT).
+	/// PSG was renamed from PVG in 2.15 — but the underlying type
+	/// name is still `MechJebModuleAscentPVGAutopilot`.
+	internal static class AscentPVGAutopilotBinding {
+		internal const string MechJebType = "MuMech.MechJebModuleAscentPVGAutopilot";
+
+		internal static FieldInfo mode;
+
+		internal static void InitType(Type type) {
+			mode = type.GetCheckedField("_mode", BindingFlags.NonPublic | BindingFlags.Instance);
 		}
 	}
 

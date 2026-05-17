@@ -6,7 +6,7 @@ using KRPC.Service.Attributes;
 
 namespace KRPC.MechJeb {
 	[KRPCClass(Service = "MechJeb")]
-	public class RCSController : ComputerModule {
+	public class RCSController : KRPCComputerModule {
 		internal new const string MechJebType = "MuMech.MechJebModuleRCSController";
 
 		// Fields and methods

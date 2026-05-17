@@ -122,6 +122,44 @@ namespace KRPC.MechJeb {
 		}
 
 		/// <summary>
+		/// Top-level ascent state machine: `PRELAUNCH` / `ASCEND` /
+		/// `CIRCULARIZE` (the private `_mode` field on the abstract
+		/// `MechJebModuleAscentBaseAutopilot`). `"Off"` when no autopilot
+		/// is active. Useful for telling whether the autopilot got past
+		/// pre-launch into the actual ascent dispatch.
+		/// </summary>
+		[KRPCProperty]
+		public string AscentStage {
+			get {
+				object active = this.ActiveAutopilot;
+				if (active == null || AscentBaseAutopilotBinding.mode == null)
+					return "Off";
+				return AscentBaseAutopilotBinding.mode.GetValue(active).ToString();
+			}
+		}
+
+		/// <summary>
+		/// Per-path inner state machine. For Classic: VERTICAL_ASCENT /
+		/// GRAVITY_TURN / COAST_TO_APOAPSIS / EXIT. For PSG:
+		/// VERTICAL_ASCENT / PITCHPROGRAM / ZEROLIFT / GUIDANCE / EXIT.
+		/// Both paths declare their own private `_mode` field; we
+		/// dispatch on `AscentPathIndex` to pick the right binding.
+		/// </summary>
+		[KRPCProperty]
+		public string PathMode {
+			get {
+				object active = this.ActiveAutopilot;
+				if (active == null) return "Off";
+				int idx = this.AscentPathIndex;
+				FieldInfo fi = idx == 0
+					? AscentClassicAutopilotBinding.mode
+					: AscentPVGAutopilotBinding.mode;
+				if (fi == null) return "?";
+				return fi.GetValue(active).ToString();
+			}
+		}
+
+		/// <summary>
 		/// The selected ascent path.
 		///
 		/// 0 = <see cref="AscentClassic" /> (Classic Ascent Profile)

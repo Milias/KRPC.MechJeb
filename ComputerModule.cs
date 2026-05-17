@@ -60,10 +60,15 @@ namespace KRPC.MechJeb {
 
 			internal static MethodInfo usersAdd;
 			internal static MethodInfo usersRemove;
+			/// `Count` property — UserPool extends `List<object>`, so this
+			/// is the inherited `List<T>.Count` getter. Used by the
+			/// observability surface to report how many users a module has.
+			internal static PropertyInfo countProp;
 
 			internal static void InitType(Type type) {
 				usersAdd = type.GetCheckedMethod("Add");
 				usersRemove = type.GetCheckedMethod("Remove");
+				countProp = type.GetCheckedProperty("Count");
 			}
 		}
 	}
@@ -74,6 +79,17 @@ namespace KRPC.MechJeb {
 			get => base.Enabled;
 			set => base.Enabled = value;
 		}
+
+		/// <summary>
+		/// Number of users requesting this module be active (MechJeb's
+		/// `UserPool` semantics — module is enabled iff at least one
+		/// user is registered). Useful for diagnosing "I engaged X but
+		/// it isn't doing anything" cases: if a downstream dependency
+		/// of X has 0 users, the cascade didn't fully wire up.
+		/// </summary>
+		[KRPCProperty]
+		public int UsersCount =>
+			this.users == null ? 0 : (int)UserPool.countProp.GetValue(this.users, null);
 	}
 
 	public abstract class AutopilotModule : KRPCComputerModule {

@@ -6,7 +6,7 @@ using KRPC.Service.Attributes;
 
 namespace KRPC.MechJeb {
 	[KRPCClass(Service = "MechJeb")]
-	public class NodeExecutor : ComputerModule {
+	public class NodeExecutor : KRPCComputerModule {
 		internal new const string MechJebType = "MuMech.MechJebModuleNodeExecutor";
 
 		// Fields and methods. MechJeb 2.15 dropped the public `tolerance`

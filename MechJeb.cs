@@ -101,6 +101,14 @@ namespace KRPC.MechJeb {
 			modules.Add("SolarPanelController", new DeployableController());
 			modules.Add("TargetController", new TargetController());
 			modules.Add("ThrustController", new ThrustController());
+
+			// Diagnostic / observability surface (Wave 1). These are
+			// MechJeb internals that ascent / landing / dock autopilots
+			// register as users of. Exposing them lets a caller see
+			// whether the cascade fully wired up.
+			modules.Add("AttitudeController", new AttitudeController());
+			modules.Add("GuidanceController", new GuidanceController());
+			modules.Add("PVGGlueBall", new Glueball());
 		}
 
 		internal static bool InitInstance() {
@@ -220,6 +228,18 @@ namespace KRPC.MechJeb {
 
 		[KRPCProperty]
 		public static ThrustController ThrustController => (ThrustController)modules["ThrustController"];
+
+		// Diagnostic / observability surface — read-only access to
+		// MechJeb internals that autopilots register as users of.
+
+		[KRPCProperty]
+		public static AttitudeController AttitudeController => (AttitudeController)modules["AttitudeController"];
+
+		[KRPCProperty]
+		public static GuidanceController GuidanceController => (GuidanceController)modules["GuidanceController"];
+
+		[KRPCProperty]
+		public static Glueball Glueball => (Glueball)modules["PVGGlueBall"];
 	}
 
 	/// <summary>
