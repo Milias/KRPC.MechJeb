@@ -134,7 +134,33 @@ namespace KRPC.MechJeb {
 			set {
 				if (value < 0 || value > 1)
 					return;
+				if (value == this.AscentPathIndex)
+					return;
+
+				// Migrate the Users-pool registration when the active path
+				// changes. The Enabled setter binds the bridge into
+				// ActiveAutopilot.users at the moment it's called; if we
+				// switch path mid-flight without migrating, the entry stays
+				// in the OLD path's pool and the new path's pool stays empty
+				// — neither autopilot ends up steering. Capture wasEnabled +
+				// the old ActiveAutopilot BEFORE writing the new index;
+				// re-resolve ActiveAutopilot afterwards to hit the new path.
+				bool wasEnabled = this.Enabled;
+				object oldActive = wasEnabled ? this.ActiveAutopilot : null;
+
 				AscentSettingsBinding.ascentTypeInteger.SetValue(this.instance, value);
+
+				if (wasEnabled) {
+					if (oldActive != null) {
+						object oldUsers = usersField.GetValue(oldActive);
+						UserPool.usersRemove.Invoke(oldUsers, new object[] { oldActive });
+					}
+					object newActive = this.ActiveAutopilot;
+					if (newActive != null) {
+						object newUsers = usersField.GetValue(newActive);
+						UserPool.usersAdd.Invoke(newUsers, new object[] { newActive });
+					}
+				}
 			}
 		}
 
